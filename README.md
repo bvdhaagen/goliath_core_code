@@ -25,5 +25,5 @@
    - Set board/port in `Tools` → Upload (➡️ button).
 
 ## Need Help?
-Open an [Issue](https://github.com/yourusername/reponame/issues).
+Open an [Issue](https://github.com/bvdhaagen/goliathcore_code/issues).
                                            
