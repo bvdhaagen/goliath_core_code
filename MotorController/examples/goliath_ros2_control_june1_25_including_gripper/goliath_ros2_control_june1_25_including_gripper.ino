@@ -1,242 +1,217 @@
+////////////////////////////////////////////////////////////////////////////////
+//   >>   M 0.5, -0.6, 1.0, 0.0, 0.5, 0.0 - Move steppers to pose
+//   >>   S 0 = close the gripper S 1 = to close the gripper
+//   >>   H = Home the robot
+
+////////////////////////////////////////////////////////////////////////////////
+
+
+
 #include "MotorController.h"
-#include <Adafruit_PWMServoDriver.h>
+#include <Servo.h>
 
-// Constants
-constexpr uint8_t NUM_MOTORS = 6;
-constexpr uint8_t NUM_GRIPPER_FINGERS = 2;
-constexpr uint8_t TOTAL_JOINTS = NUM_MOTORS + NUM_GRIPPER_FINGERS;
-constexpr uint32_t SERIAL_BAUD_RATE = 115200;
-constexpr uint16_t FEEDBACK_INTERVAL_MS = 20;  // 50Hz feedback rate
-constexpr uint16_t SERVO_PWM_FREQ = 60;        // 60Hz for analog servos
-
-// Servo settings
-constexpr uint16_t SERVO_MIN = 350;  // Minimum pulse length count
-constexpr uint16_t SERVO_MAX = 560;  // Maximum pulse length count
-constexpr uint8_t GRIPPER_CHANNEL = 0;  // PCA9685 channel for gripper
-
-// Gripper range in radians
-constexpr float FINGER1_MIN = -0.03f;
-constexpr float FINGER1_MAX = 0.22f;
-constexpr float FINGER2_MIN = 0.22f;
-constexpr float FINGER2_MAX = -0.03f;
-
-// Movement parameters
-constexpr float DEFAULT_MOVEMENT_DURATION_MS = 3000.0f;
-constexpr float MOVE_THRESHOLD = 0.001f;  // rad
+// create servo object to control a servo
+Servo myservo;  
 
 // Motor configuration
+const int NUM_MOTORS = 6;
 const int stepPins[NUM_MOTORS] = {7, 6, 5, 3, 4, 2};
 const int dirPins[NUM_MOTORS] = {29, 28, 25, 24, 9, 8};
 const int limitPins[NUM_MOTORS] = {23, 22, 14, 37, 36, 33};
 
-// Motor parameters
+// variables to store the servo data
+int servo_pos = 0;    
+bool servo_open = true;
+int openPos = 50;  
+int closePos = 155;   
+int angle = 50;
+// Stepper Motor parameters
 const int homingSpeed[NUM_MOTORS] = {600, 1200, 800, 400, 400, 400};
 const int maxSpeed[NUM_MOTORS] = {1000, 5000, 8000, 2000, 800, 1200};
 const int stepsToReverse[NUM_MOTORS] = {
-  11450,    // J1: Half of full rotation
-  53800,    // J2: Half of full rotation
-  33000,    // J3: Half of full rotation
-  11000,    // J4: Half of full rotation
-  7500,     // J5: Half of full rotation
-  11500     // J6: Half of full rotation
+  11450,    // J1: Half of full rotation (24000/2)
+  53800,    // J2: Half of full rotation (168000/2)
+  33000,    // J3: Half of full rotation (70000/2)
+  11000,    // J4: Half of full rotation (25000/2)
+  7500,     // J5: Half of full rotation (13000/2)
+  11500     // J6: Half of full rotation (19000/2)
 };
 const int acceleration[NUM_MOTORS] = {1400, 2000, 600, 2000, 1500, 1400};
 const int motorDirection[NUM_MOTORS] = {1, -1, -1, -1, -1, -1};
 
-// Steps per radian conversion
+// Steps per radian conversion (using full rotation steps)
 const float STEPS_PER_RAD[NUM_MOTORS] = {
-  24200.0f / (2.0f * PI),   // J1
-  200000.0f / (2.0f * PI),  // J2
-  80000.0f / (2.0f * PI),   // J3
-  24200.0f / (2.0f * PI),   // J4
-  24000.0f / (2.0f * PI),   // J5
-  24000.0f / (2.0f * PI)    // J6
+  24200.0f / (2 * PI),   // J1 = 3819.72 steps/rad    
+  200000.0f / (2 * PI),  // J2 = 26738.03 steps/rad
+  80000.0f / (2 * PI),   // J3 = 11140.85 steps/rad
+  24200.0f / (2 * PI),   // J4 = 3978.87 steps/rad
+  24000.0f / (2 * PI),   // J5 = 2069.01 steps/rad
+  24000.0f / (2 * PI)    // J6 = 3023.94 steps/rad
 };
 
-// Objects
-Adafruit_PWMServoDriver pwm;
 MotorController arm(stepPins, dirPins, limitPins, NUM_MOTORS);
 
-// State variables
-float target_positions[TOTAL_JOINTS] = {0};  // 6 arm + 2 gripper
-float current_positions[TOTAL_JOINTS] = {0};
-float movement_start_positions[TOTAL_JOINTS] = {0};
-float movement_duration_ms = DEFAULT_MOVEMENT_DURATION_MS;
-uint32_t movement_start_time = 0;
+// Position control
+float target_positions[NUM_MOTORS] = {0};
+const float MAX_SPEED_RAD = 5.0; // rad/s
+const float MOVE_THRESHOLD = 0.001; // rad
+
+// Movement tracking
+float movement_start_positions[NUM_MOTORS] = {0};
+unsigned long movement_start_time = 0;
 bool movement_in_progress = false;
 
-///////////////////////////////////////////////////////////////////////////////
-//                          Helper Functions                                //
-///////////////////////////////////////////////////////////////////////////////
 
-inline float mapToPWM(float joint_pos) {
-  // Safely map joint position to PWM value
-  joint_pos = constrain(joint_pos, FINGER1_MIN, FINGER1_MAX);
-  return static_cast<uint16_t>(
-    map(joint_pos * 1000.0f, FINGER1_MIN * 1000.0f, FINGER1_MAX * 1000.0f, 
-        SERVO_MIN, SERVO_MAX)
-  );
-}
+void setup() {
+  Serial.begin(115200);
+  while (!Serial); // Wait for serial connection
+  //if serial is initialized 
+  myservo.attach(9);  
+  arm.begin(homingSpeed, maxSpeed, stepsToReverse, acceleration, motorDirection);
+  arm.homeAll();
 
-void setGripper(float position) {
-  // Constrain and set both fingers
-  position = constrain(position, FINGER1_MIN, FINGER1_MAX);
-  
-  // Calculate finger positions
-  current_positions[NUM_MOTORS] = position;  // Finger 1
-  current_positions[NUM_MOTORS+1] = FINGER2_MIN + 
-    (position - FINGER1_MIN) * (FINGER2_MAX - FINGER2_MIN) / (FINGER1_MAX - FINGER1_MIN);
-  
-  // Set PWM
-  pwm.setPWM(GRIPPER_CHANNEL, 0, mapToPWM(position));
-}
-
-void parseMovementCommand(const String& cmd) {
-  // Expecting format: "M val1,val2,...,val7" (6 arm + 1 gripper)
-  int startIdx = 2;  // Skip "M "
-  int commaIdx;
-  uint8_t jointIdx = 0;
-  
-  while ((commaIdx = cmd.indexOf(',', startIdx)) >= 0 && jointIdx < 7) {
-    float value = cmd.substring(startIdx, commaIdx).toFloat();
-    
-  if (jointIdx < 6) {  // First 6 values: Arm joints
-      target_positions[jointIdx] = value;
-  } 
-  else if (jointIdx == 6) {  // 7th value: Gripper command
-      // Set both gripper fingers to the same value (mirroring)
-      target_positions[6] = value;     // First gripper finger
-      target_positions[7] = value*-1; // Second gripper finger (mirrored)
-      setGripper(value);  // Apply the gripper command
+  for (servo_pos = 0; servo_pos <= 180; servo_pos += 1) { // goes from 0 degrees to 180 degrees
+    // in steps of 1 degree
+    myservo.write(servo_pos);        
+    delay(15);                       // waits 15 ms for the servo to reach
   }
-    
-    startIdx = commaIdx + 1;
-    jointIdx++;
-    
-    if (commaIdx < 0) break;  // No more commas
+  for (servo_pos = 180; servo_pos >= 0; servo_pos -= 1) { 
+    myservo.write(servo_pos);              
+    delay(15);                      
   }
   
-  // Initialize movement
-  memcpy(movement_start_positions, current_positions, sizeof(current_positions));
-  movement_start_time = millis();
-  movement_in_progress = true;
+  Serial.println("System ready. Commands:");
+  
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//              helper functions                                              //
+////////////////////////////////////////////////////////////////////////////////
+
+void setGripper(){
+  myservo.write(angle);
 }
 
 void executeSynchronizedMovement() {
-  uint32_t elapsed = millis() - movement_start_time;
-  float progress = min(1.0f, static_cast<float>(elapsed) / movement_duration_ms);
+  // 1. Calculate required movement for each joint
+  float movements_rad[NUM_MOTORS];
+  float max_movement = 0;
   
-  // Interpolate all joints
-  for (uint8_t i = 0; i < TOTAL_JOINTS; i++) {
-    current_positions[i] = movement_start_positions[i] + 
-                         (target_positions[i] - movement_start_positions[i]) * progress;
-    
-    // Handle motor movements
-    if (i < NUM_MOTORS) {
-      arm.moveRelative(i, current_positions[i] * STEPS_PER_RAD[i]);
+  for (int i = 0; i < NUM_MOTORS; i++) {
+    movements_rad[i] = fabs(target_positions[i] - movement_start_positions[i]);
+    if (movements_rad[i] > max_movement) {
+      max_movement = movements_rad[i];
     }
   }
+
+  // 2. Calculate time needed for the longest movement
+  float movement_time = max_movement / MAX_SPEED_RAD;
   
-  // Update gripper servo
-  pwm.setPWM(GRIPPER_CHANNEL, 0, mapToPWM(current_positions[NUM_MOTORS]));
+  // 3. Calculate progress (0-1)
+  float progress = min(1.0, (millis() - movement_start_time) / (movement_time * 1000));
   
-  // Check completion
-  if (progress >= 1.0f) {
+  // 4. Move each joint proportionally
+  for (int i = 0; i < NUM_MOTORS; i++) {
+    if (movements_rad[i] > MOVE_THRESHOLD) {
+      float current_target = movement_start_positions[i] + (progress * (target_positions[i] - movement_start_positions[i]));
+      long target_steps = current_target * STEPS_PER_RAD[i];
+      arm.moveToPosition(i, target_steps);
+    }
+  }
+
+  // 5. Check if movement is complete
+  if (progress >= 1.0) {
     movement_in_progress = false;
-  }
-}
-
-void sendFeedback() {
-  static uint32_t last_send = 0;
-  uint32_t now = millis();
-  
-  if (now - last_send >= FEEDBACK_INTERVAL_MS) {
-    // Arm joints
-    for (uint8_t i = 0; i < NUM_MOTORS; i++) {
-      Serial.print("J"); Serial.print(i+1); 
-      Serial.print(":"); Serial.print(current_positions[i], 3);
-      Serial.print(" ");
+    // Ensure final positions are exact
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      arm.moveToPosition(i, target_positions[i] * STEPS_PER_RAD[i]);
     }
-    
-    // Gripper fingers
-    Serial.print("S1:"); Serial.print(current_positions[NUM_MOTORS], 3);
-    Serial.print(" ");
-    Serial.print("S2:"); Serial.print(current_positions[NUM_MOTORS+1], 3);
-    
-    Serial.println();
-    last_send = now;
   }
 }
-
-///////////////////////////////////////////////////////////////////////////////
-//                          Main Arduino Functions                          //
-///////////////////////////////////////////////////////////////////////////////
-
-void setup() {
-  Serial.begin(SERIAL_BAUD_RATE);
-  while (!Serial); // Wait for serial connection
-
-  // Initialize PWM servo driver
-  pwm.begin();
-  pwm.setPWMFreq(SERVO_PWM_FREQ);
-
-  // Initialize motor controller
-  arm.begin(homingSpeed, maxSpeed, stepsToReverse, acceleration, motorDirection);
-
-  // Home the robot
-  arm.homeAll();
-  
-  // Initialize positions
-  for (uint8_t i = 0; i < NUM_MOTORS; i++) {
-    current_positions[i] = 0.0f;
-    target_positions[i] = 0.0f;
-  }
-  
-  // Initialize gripper to closed position
-  setGripper(FINGER1_MIN);
-}
+////////////////////////////////////////////////////////////////////////////////
+//              main loop                                                     //
+////////////////////////////////////////////////////////////////////////////////
 
 void loop() {
-  // Critical motor control
-  arm.run();
+  arm.run(); // Critical for motor movement
   
-  // Handle incoming commands
+  // 1. Handle incoming commands
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     
-    if (cmd.length() > 0) {
-      switch (toupper(cmd[0])) {
-        case 'M':  // Movement command
-          if (cmd.length() > 2) {
-            parseMovementCommand(cmd);
-          }
-          break;
-          
-        case 'H':  // Home command
-          arm.homeAll();
-          for (uint8_t i = 0; i < NUM_MOTORS; i++) {
-            target_positions[i] = 0.0f;
-            current_positions[i] = 0.0f;
-          }
-          setGripper(FINGER1_MIN);
-          movement_in_progress = false;
-          break;
-          
-        case 'D':  // Set duration
-          if (cmd.length() > 2) {
-            movement_duration_ms = cmd.substring(2).toFloat();
-          }
-          break;
+    if (cmd.startsWith("M ")) {
+      // Parse position commands
+      String data = cmd.substring(2);
+      int index = 0;
+      int lastComma = -1;
+      
+      for (unsigned int i = 0; i <= data.length(); i++) {
+        if (i == data.length() || data.charAt(i) == ',') {
+          target_positions[index] = data.substring(lastComma + 1, i).toFloat();
+          lastComma = i;
+          if (++index >= NUM_MOTORS) break;
+        }
       }
+       
+      // Initialize synchronized movement
+      for (int i = 0; i < NUM_MOTORS; i++) {
+        movement_start_positions[i] = arm.getPosition(i) / STEPS_PER_RAD[i];
+      }
+      movement_start_time = millis();
+      movement_in_progress = true;
     }
+
+    if (cmd.startsWith("G ")) {
+    
+     String angleStr = cmd.substring(2);
+      angle = angleStr.toInt();
+      
+      // Constrain the angle to safe limits
+      angle = constrain(angle, openPos, closePos);
+      
+      // Move the servo
+      setGripper();
+     
+    } 
+
+    else if (toupper(cmd[0]) == 'H') {
+      arm.homeAll();
+      for (int i = 0; i < NUM_MOTORS; i++) {
+        target_positions[i] = 0;
+      }
+      movement_in_progress = false;
+    }
+
+
   }
-  
-  // Execute movement if active
+
+  // 2. Execute synchronized movement if active
   if (movement_in_progress) {
     executeSynchronizedMovement();
   }
-  
-  // Send feedback
-  sendFeedback();
+
+  // 3. Send position feedback
+  static unsigned long last_send = 0;
+  if (millis() - last_send >= 20) { // 50Hz feedback rate
+    for (int i = 0; i < NUM_MOTORS; i++) {
+      float pos_rad = arm.getPosition(i) / STEPS_PER_RAD[i];
+      Serial.print("J"); Serial.print(i+1); 
+      Serial.print(":"); Serial.print(pos_rad, 3);
+      }
+
+      // Calculate and print remapped gripper value
+    float remapped_gripper = map(angle, 50, 150, -0.003f * 1000, 0.022f * 1000) / 1000.0f;
+    Serial.print(" "); Serial.print("G1:"); 
+    Serial.print(remapped_gripper, 4); // 4 decimal places
+
+    Serial.print(" "); Serial.print("G2:"); 
+    Serial.print(remapped_gripper*-1, 4);
+    
+    Serial.println();
+
+
+    last_send = millis();
+  }
 }
