@@ -5,23 +5,28 @@
 ## Quick Start
 
 1. **Download**  
-   - Clone the repo or download the `.zip`:  
-     ```bash
+   - Clone the repo :
+   -  ```bash
      git clone https://github.com/yourusername/reponame.git
-     ```
 
-2. **Install in Arduino IDE**  
-   - `Sketch` → `Include Library` → `Add .ZIP Library...` → Select the downloaded `.zip`.
+   ```
+   or download the `.zip`
+   
+     Unpack the goliath_core_code and make sure the library file is separately ziped and packed as MotorController.zip
+   
+3. **Install in Arduino IDE**  
+   - `Sketch` → `Include Library` → `Add .ZIP Library.` → Select the -> `MotorController.zip`.
+   - install the accelstepper library, using the `library manager`
 
-3. **Open Examples**  
+4. **Open Examples**  
    Navigate to:  
    `File` → `Examples` → `Motorcontroller` → Select one:  
-   - `goliath_core_v5_2025.ino`  
-   - `goliath_ros2_control_june1_25_including_gripper`  
-   - `goliath_ros2_control_may19_25b`  
-   - `single_motor_test`  
+   - `goliath_core_v5_2025.ino`                          (WIP)
+   - `goliath_ros2_control_june1_25_including_gripper`   (working)  
+   - `goliath_ros2_control_may19_25b`                    (working)
+   - `single_motor_test`                                 (working)
 
-4. **Upload**  
+5. **Upload**  
    - Set board/port in `Tools` → Upload (➡️ button).
 
 ## Need Help?
