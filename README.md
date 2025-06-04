@@ -6,13 +6,11 @@
 
 1. **Download**  
    - Clone the repo :
-   -  ```bash
-     git clone https://github.com/yourusername/reponame.git
-
-   ```
+   -  bash ``` git clone https://github.com/bvdhaagen/goliath_core_code.git ```
+     
    or download the `.zip`
    
-     Unpack the goliath_core_code and make sure the library file is separately ziped and packed as MotorController.zip
+     Unpack the ```goliath_core_code``` and make sure the library file is separately ziped and packed as ```MotorController.zip```
    
 3. **Install in Arduino IDE**  
    - `Sketch` → `Include Library` → `Add .ZIP Library.` → Select the -> `MotorController.zip`.
